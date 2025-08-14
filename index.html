@@ -167,7 +167,7 @@
               "Add an optional description for your records.",
               "The calculator finds the maximum absence in any 12-month period.",
               "Travel dates (departure/arrival days) do not count as absences.",
-              "Ensure total absences in any 12-month period do not exceed 182.5 days.",
+              "Ensure total absences in any 12-month period do not exceed 180 days.",
               "Do NOT include absences for 'serious or compelling reasons' if approved by the Home Office."
           ];
 
@@ -451,7 +451,7 @@
                   </h3>
                   <div className="mt-2 text-sm text-red-700">
                       <p>
-                          Your absences in a 12-month period have reached <strong>{days.toFixed(1)} days</strong>, which is over the typical 182.5-day limit.
+                          Your absences in a 12-month period have reached <strong>{days.toFixed(1)} days</strong>, which is over the typical 180-day limit.
                       </p>
                       <p className="mt-1">
                           This could affect your continuous residence status. It is highly recommended to seek professional immigration advice.
@@ -506,7 +506,7 @@
               <main className="bg-white rounded-xl shadow-2xl p-4 sm:p-6 md:p-8 mt-[-60px] z-10 relative">
                 <Instructions />
                 <SummaryDashboard summary={summary} />
-                {summary.max12MonthPeriod.days > 182.5 && (
+                {summary.max12MonthPeriod.days > 180 && (
                   <ValidationWarning days={summary.max12MonthPeriod.days} />
                 )}
                 <AbsenceInputSection
