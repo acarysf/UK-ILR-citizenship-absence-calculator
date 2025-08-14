@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>UK Residence Calculator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      /* Custom utility classes used in components */
+      .text-shadow { text-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+      .text-shadow-lg { text-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+      /* Improve mobile experience */
+      body { -webkit-text-size-adjust: 100%; }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.1.1",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.1/",
+    "react/": "https://esm.sh/react@^19.1.1/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-gray-100">
+    <div id="root"></div>
+    <script type="text/babel" data-type="module">
+      import React, { useState, useMemo, useCallback, useRef } from 'https://esm.sh/react@18.2.0';
+      import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+
+      // --- from services/residenceCalculator.ts ---
+      const parseDate = (dateStr) => {
+        if (!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) {
+          return null;
+        }
+        const parts = dateStr.split('/');
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const year = parseInt(parts[2], 10);
+        const date = new Date(year, month, day);
+
+        if (
+          date.getFullYear() !== year ||
+          date.getMonth() !== month ||
+          date.getDate() !== day
+        ) {
+          return null;
+        }
+        return date;
+      };
+
+      const formatDate = (date) => {
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
+      };
+
+      const calculateAbsenceDays = (start, end) => {
+        if (!start || !end || end < start) {
+          return 0;
+        }
+        const diffTime = end.getTime() - start.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 3600 * 24));
+        return Math.max(0, diffDays - 1);
+      };
+
+      const getValidatedAbsences = (entries) => {
+        return entries
+          .map(entry => {
+            const start = parseDate(entry.dateLeft);
+            const end = parseDate(entry.dateReturned);
+            if (start && end && end >= start) {
+              return { start, end, days: calculateAbsenceDays(start, end) };
+            }
+            return null;
+          })
+          .filter((a) => a !== null && a.days > 0);
+      };
+
+      const calculateMax12MonthAbsence = (absences) => {
+        if (absences.length === 0) return { days: 0, endDate: null };
+
+        let maxDays = 0;
+        let maxPeriodEndDate = null;
+        
+        const criticalDates = [];
+        absences.forEach(a => {
+          criticalDates.push(a.end);
+        });
+
+        const uniqueDates = Array.from(new Set(criticalDates.map(d => d.getTime()))).map(t => new Date(t));
+
+        uniqueDates.forEach(periodEndDate => {
+          const periodStartDate = new Date(periodEndDate);
+          periodStartDate.setFullYear(periodEndDate.getFullYear() - 1);
+          periodStartDate.setDate(periodEndDate.getDate() + 1);
+
+          let currentPeriodDays = 0;
+          absences.forEach(absence => {
+            const absenceStart = new Date(absence.start.getTime() + 24 * 60 * 60 * 1000); // Day after departure
+            const absenceEnd = new Date(absence.end.getTime() - 24 * 60 * 60 * 1000); // Day before return
+            
+            if (absenceStart > absenceEnd) return;
+
+            const overlapStart = new Date(Math.max(absenceStart.getTime(), periodStartDate.getTime()));
+            const overlapEnd = new Date(Math.min(absenceEnd.getTime(), periodEndDate.getTime()));
+
+            if (overlapStart <= overlapEnd) {
+              const overlapDuration = Math.round((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 3600 * 24)) + 1;
+              currentPeriodDays += overlapDuration;
+            }
+          });
+
+          if (currentPeriodDays > maxDays) {
+            maxDays = currentPeriodDays;
+            maxPeriodEndDate = periodEndDate;
+          }
+        });
+
+        return { days: maxDays, endDate: maxPeriodEndDate };
+      };
+
+      const calculateAllMetrics = (entries) => {
+        const validatedAbsences = getValidatedAbsences(entries);
+
+        const totalDays = validatedAbsences.reduce((sum, a) => sum + a.days, 0);
+        const longestAbsence = Math.max(0, ...validatedAbsences.map(a => a.days));
+        const max12MonthPeriod = calculateMax12MonthAbsence(validatedAbsences);
+        
+        return {
+          totalEntries: validatedAbsences.length,
+          totalDays,
+          longestAbsence,
+          max12MonthPeriod,
+        };
+      };
+
+      // --- from components/Header.tsx ---
+      const Header = () => {
+        return (
+          <header className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white p-8 sm:p-12 md:p-16 rounded-b-3xl shadow-lg">
+            <div className="text-center">
+              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-shadow-lg">
+                UK Residence Calculator
+              </h1>
+              <p className="mt-4 text-base sm:text-lg md:text-xl opacity-90 max-w-2xl mx-auto">
+                Track your absences from the UK to ensure compliance with continuous residence requirements.
+              </p>
+            </div>
+          </header>
+        );
+      };
+      
+      // --- from components/Instructions.tsx ---
+      const CheckIcon = ({ className }) => (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className}>
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+          </svg>
+      );
+
+      const Instructions = () => {
+          const items = [
+              "Enter departure and return dates in DD/MM/YYYY format.",
+              "Add an optional description for your records.",
+              "The calculator finds the maximum absence in any 12-month period.",
+              "Travel dates (departure/arrival days) do not count as absences.",
+              "Ensure total absences in any 12-month period do not exceed 182.5 days.",
+              "Do NOT include absences for 'serious or compelling reasons' if approved by the Home Office."
+          ];
+
+          return (
+              <div className="mb-8 p-6 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
+                  <h3 className="text-xl font-semibold text-blue-800 mb-4">How It Works</h3>
+                  <ul className="space-y-2">
+                      {items.map((item, index) => (
+                          <li key={index} className="flex items-start">
+                              <CheckIcon className="h-6 w-6 text-green-500 mr-3 flex-shrink-0 mt-0.5" />
+                              <span className="text-gray-700">{item}</span>
+                          </li>
+                      ))}
+                  </ul>
+              </div>
+          );
+      };
+
+      // --- from components/SummaryDashboard.tsx ---
+      const SummaryCard = ({ title, value, subtitle }) => (
+        <div className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-5 rounded-xl shadow-lg transition-transform hover:-translate-y-1 transform">
+          <h3 className="text-sm sm:text-base font-medium text-indigo-200 uppercase tracking-wider">{title}</h3>
+          <p className="text-3xl sm:text-4xl font-bold mt-2 text-shadow">{value}</p>
+          {subtitle && <p className="text-xs sm:text-sm opacity-80 mt-2">{subtitle}</p>}
+        </div>
+      );
+
+      const SummaryDashboard = ({ summary }) => {
+        const maxPeriodDays = parseFloat(summary.max12MonthPeriod.days.toFixed(1));
+        const maxPeriodEndDate = summary.max12MonthPeriod.endDate ? formatDate(summary.max12MonthPeriod.endDate) : 'N/A';
+
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
+            <SummaryCard title="Total Trips" value={summary.totalEntries} />
+            <SummaryCard title="Total Days Away" value={summary.totalDays} />
+            <SummaryCard title="Longest Absence" value={summary.longestAbsence} subtitle="days" />
+            <SummaryCard 
+              title="Max 12-Month Period" 
+              value={maxPeriodDays}
+              subtitle={maxPeriodDays > 0 ? `ending ${maxPeriodEndDate}` : ''}
+            />
+          </div>
+        );
+      };
+
+      // --- from components/AbsenceEntryRow.tsx ---
+      const TrashIcon = ({className}) => (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className}>
+              <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" />
+          </svg>
+      );
+      
+      const AbsenceEntryRow = ({ entry, onUpdate, onDelete }) => {
+        const { days, isValid } = useMemo(() => {
+          const dateLeft = parseDate(entry.dateLeft);
+          const dateReturned = parseDate(entry.dateReturned);
+          const hasBothDates = entry.dateLeft.length > 0 && entry.dateReturned.length > 0;
+
+          if (!dateLeft || !dateReturned || dateReturned < dateLeft) {
+            return { days: 0, isValid: !hasBothDates }; // Valid if empty, invalid if dates are filled but wrong
+          }
+          return { days: calculateAbsenceDays(dateLeft, dateReturned), isValid: true };
+        }, [entry.dateLeft, entry.dateReturned]);
+
+        const getInputClass = (isFieldValid) => {
+            const baseClass = "w-full px-3 py-2 text-sm bg-white border rounded-md shadow-sm focus:outline-none focus:ring-2";
+            return isFieldValid 
+              ? `${baseClass} border-gray-300 focus:ring-indigo-500 focus:border-indigo-500`
+              : `${baseClass} border-red-500 focus:ring-red-500 focus:border-red-500`;
+        };
+
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+              <div className="md:col-span-3">
+                  <label className="text-sm font-medium text-gray-700 md:hidden">Date Left UK</label>
+                  <input
+                      type="text"
+                      placeholder="DD/MM/YYYY"
+                      value={entry.dateLeft}
+                      onChange={(e) => onUpdate(entry.id, { dateLeft: e.target.value })}
+                      className={getInputClass(isValid || !entry.dateLeft)}
+                  />
+              </div>
+              <div className="md:col-span-3">
+                  <label className="text-sm font-medium text-gray-700 md:hidden">Date Returned to UK</label>
+                  <input
+                      type="text"
+                      placeholder="DD/MM/YYYY"
+                      value={entry.dateReturned}
+                      onChange={(e) => onUpdate(entry.id, { dateReturned: e.target.value })}
+                      className={getInputClass(isValid || !entry.dateReturned)}
+                  />
+              </div>
+              <div className="md:col-span-4">
+                  <label className="text-sm font-medium text-gray-700 md:hidden">Description</label>
+                  <input
+                      type="text"
+                      placeholder="e.g., Summer Holiday"
+                      value={entry.description}
+                      onChange={(e) => onUpdate(entry.id, { description: e.target.value })}
+                      className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+              </div>
+              <div className="md:col-span-1 text-center">
+                  <div 
+                      className={`w-full py-2 text-sm font-bold text-white rounded-md ${isValid && days > 0 ? 'bg-green-500' : 'bg-gray-400' } ${!isValid ? 'bg-red-500' : ''}`}
+                  >
+                      {!isValid ? 'Error' : days}
+                  </div>
+              </div>
+              <div className="md:col-span-1 flex justify-center">
+                  <button
+                      onClick={() => onDelete(entry.id)}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded-full transition-colors duration-200"
+                      aria-label="Delete entry"
+                  >
+                      <TrashIcon className="h-5 w-5"/>
+                  </button>
+              </div>
+          </div>
+        );
+      };
+
+      // --- from components/AbsenceInputSection.tsx ---
+      const AbsenceInputSection = ({
+        entries,
+        onUpdateEntry,
+        onDeleteEntry,
+        onAddEntry,
+        onClearAll,
+      }) => {
+        return (
+          <div className="bg-gray-50 p-4 sm:p-6 rounded-xl shadow-sm my-8">
+            <div className="hidden md:grid md:grid-cols-12 gap-4 mb-4 px-3 py-2 text-sm font-semibold text-gray-600">
+              <div className="md:col-span-3">Date Left UK</div>
+              <div className="md:col-span-3">Date Returned to UK</div>
+              <div className="md:col-span-4">Description (optional)</div>
+              <div className="md:col-span-1 text-center">Days</div>
+              <div className="md:col-span-1"></div>
+            </div>
+            
+            <div className="space-y-4">
+              {entries.map((entry) => (
+                <AbsenceEntryRow
+                  key={entry.id}
+                  entry={entry}
+                  onUpdate={onUpdateEntry}
+                  onDelete={onDeleteEntry}
+                />
+              ))}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6 pt-6 border-t border-gray-200">
+              <button
+                onClick={onAddEntry}
+                className="w-full sm:w-auto bg-green-600 text-white font-semibold py-2 px-5 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200"
+              >
+                Add Another Trip
+              </button>
+              <button
+                onClick={onClearAll}
+                className="w-full sm:w-auto bg-red-600 text-white font-semibold py-2 px-5 rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all duration-200"
+              >
+                Clear All Entries
+              </button>
+            </div>
+          </div>
+        );
+      };
+
+      // --- from components/Warning.tsx ---
+      const ExclamationIcon = ({ className }) => (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className}>
+              <path fillRule="evenodd" d="M8.257 3.099c.636-1.214 2.85-1.214 3.486 0l5.58 10.655c.636 1.214-.474 2.746-1.743 2.746H4.42c-1.269 0-2.379-1.532-1.743-2.746l5.58-10.655zM9 8a1 1 0 011-1h.01a1 1 0 110 2H10a1 1 0 01-1-1zm1 2a1 1 0 00-1 1v3a1 1 0 102 0v-3a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+      );
+
+      const Warning = () => {
+          return (
+              <div className="mt-8 p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded-r-lg">
+                  <div className="flex">
+                      <div className="flex-shrink-0">
+                          <ExclamationIcon className="h-6 w-6 text-yellow-500" />
+                      </div>
+                      <div className="ml-3">
+                          <p className="text-sm text-yellow-800">
+                              <strong className="font-semibold">Disclaimer:</strong> This calculator is for guidance only and does not constitute legal or immigration advice. Always consult with a qualified immigration professional for advice on your specific situation.
+                          </p>
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+
+      // --- from components/ExportSection.tsx ---
+      const ExportSection = ({ entries }) => {
+        const [exportData, setExportData] = useState('');
+        const textareaRef = useRef(null);
+
+        const generateExportData = () => {
+          let content = 'Date Left UK\tDate Returned to UK\tDescription\tDays Away\n';
+          entries.forEach(entry => {
+            const days = calculateAbsenceDays(parseDate(entry.dateLeft), parseDate(entry.dateReturned));
+            if (entry.dateLeft || entry.dateReturned || entry.description) {
+              content += `${entry.dateLeft || ''}\t${entry.dateReturned || ''}\t${entry.description || ''}\t${days}\n`;
+            }
+          });
+          setExportData(content);
+          
+          setTimeout(() => {
+              const textarea = textareaRef.current;
+              if (!textarea) return;
+
+              textarea.select();
+              
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(textarea.value).then(() => {
+                  alert('Data copied to clipboard!');
+                }).catch(err => {
+                   console.warn('Clipboard copy failed, falling back to execCommand.', err);
+                   // Fallback for browsers that don't support or allow clipboard API in this context
+                   if(document.execCommand('copy')) {
+                     alert('Data copied to clipboard!');
+                   } else {
+                     alert('Could not copy data automatically. Please copy it manually.');
+                   }
+                });
+              } else if (document.execCommand('copy')) {
+                 // Older browser fallback
+                 alert('Data copied to clipboard!');
+              } else {
+                 alert('Could not copy data automatically. Please copy it manually.');
+              }
+          }, 100);
+        };
+
+        return (
+          <div className="bg-gray-100 p-6 rounded-xl mt-8 text-center">
+            <h3 className="text-lg font-semibold text-gray-800">Export Your Data</h3>
+            <p className="text-sm text-gray-600 mt-2 mb-4 max-w-md mx-auto">
+              Generate a tab-separated list of your entries to save or paste into a spreadsheet like Excel or Google Sheets.
+            </p>
+            <button
+              onClick={generateExportData}
+              className="bg-indigo-600 text-white font-semibold py-2 px-5 rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200"
+            >
+              Generate & Copy to Clipboard
+            </button>
+            {exportData && (
+              <div className="mt-4">
+                <textarea
+                  ref={textareaRef}
+                  readOnly
+                  value={exportData}
+                  className="w-full h-40 p-3 font-mono text-sm bg-white border border-gray-300 rounded-md shadow-inner"
+                  aria-label="Exported data"
+                ></textarea>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      // --- from components/ValidationWarning.tsx ---
+      const WarningIcon = ({ className }) => (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className}>
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+          </svg>
+      );
+      
+      const ValidationWarning = ({ days }) => {
+        return (
+          <div className="mb-8 p-4 bg-red-50 border-l-4 border-red-500 rounded-r-lg">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <WarningIcon className="h-6 w-6 text-red-500" />
+              </div>
+              <div className="ml-3">
+                  <h3 className="text-md font-semibold text-red-800">
+                      Warning: Residence Rule Limit Exceeded
+                  </h3>
+                  <div className="mt-2 text-sm text-red-700">
+                      <p>
+                          Your absences in a 12-month period have reached <strong>{days.toFixed(1)} days</strong>, which is over the typical 182.5-day limit.
+                      </p>
+                      <p className="mt-1">
+                          This could affect your continuous residence status. It is highly recommended to seek professional immigration advice.
+                      </p>
+                  </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // --- from App.tsx ---
+      const createInitialEntry = () => ({
+        id: `entry-${Date.now()}-${Math.random()}`,
+        dateLeft: '',
+        dateReturned: '',
+        description: '',
+      });
+
+      const App = () => {
+        const [entries, setEntries] = useState([createInitialEntry()]);
+
+        const summary = useMemo(() => calculateAllMetrics(entries), [entries]);
+
+        const handleUpdateEntry = useCallback((id, updatedData) => {
+          setEntries(prevEntries => 
+            prevEntries.map(entry => entry.id === id ? { ...entry, ...updatedData } : entry)
+          );
+        }, []);
+
+        const handleAddEntry = useCallback(() => {
+          setEntries(prevEntries => [...prevEntries, createInitialEntry()]);
+        }, []);
+
+        const handleDeleteEntry = useCallback((id) => {
+          setEntries(prevEntries => {
+            const newEntries = prevEntries.filter(entry => entry.id !== id);
+            return newEntries.length > 0 ? newEntries : [createInitialEntry()];
+          });
+        }, []);
+
+        const handleClearAll = useCallback(() => {
+          if (window.confirm('Are you sure you want to clear all entries? This action cannot be undone.')) {
+              setEntries([createInitialEntry()]);
+          }
+        }, []);
+
+        return (
+          <div className="font-sans antialiased text-gray-800">
+            <Header />
+            <div className="container mx-auto px-4 pb-12">
+              <main className="bg-white rounded-xl shadow-2xl p-4 sm:p-6 md:p-8 mt-[-60px] z-10 relative">
+                <Instructions />
+                <SummaryDashboard summary={summary} />
+                {summary.max12MonthPeriod.days > 182.5 && (
+                  <ValidationWarning days={summary.max12MonthPeriod.days} />
+                )}
+                <AbsenceInputSection
+                  entries={entries}
+                  onUpdateEntry={handleUpdateEntry}
+                  onDeleteEntry={handleDeleteEntry}
+                  onAddEntry={handleAddEntry}
+                  onClearAll={handleClearAll}
+                />
+                <Warning />
+                <ExportSection entries={entries} />
+              </main>
+            </div>
+          </div>
+        );
+      };
+
+      // --- from index.tsx ---
+      const rootElement = document.getElementById('root');
+      if (!rootElement) {
+        throw new Error("Could not find root element to mount to");
+      }
+
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(
+          <React.StrictMode>
+              <App />
+          </React.StrictMode>
+      );
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
